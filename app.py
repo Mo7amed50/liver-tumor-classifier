@@ -15,11 +15,11 @@ import tempfile
 import pandas as pd
 from datetime import datetime
 import atexit
+import requests
 
 # -----------------------------
 # Step 1: Define Custom Objects
 # -----------------------------
-
 class CBAMLayer(Layer):
     def __init__(self, ratio=8, **kwargs):
         super(CBAMLayer, self).__init__(**kwargs)
@@ -55,6 +55,7 @@ class CBAMLayer(Layer):
         config.update({'ratio': self.ratio})
         return config
 
+
 @tf.keras.utils.register_keras_serializable()
 def focal_loss(gamma=2., alpha=0.25):
     def focal_loss_fixed(y_true, y_pred):
@@ -62,9 +63,10 @@ def focal_loss(gamma=2., alpha=0.25):
         y_pred = tf.clip_by_value(y_pred, epsilon, 1. - epsilon)
         pt = tf.where(tf.equal(y_true, 1), y_pred, 1 - y_pred)
         return -tf.reduce_sum(alpha * tf.pow(1. - pt, gamma) * tf.math.log(pt), axis=-1)
-    
+
     focal_loss_fixed.__name__ = 'focal_loss_fixed'
     return focal_loss_fixed
+
 
 # Register custom objects
 get_custom_objects().update({
@@ -72,23 +74,60 @@ get_custom_objects().update({
     'focal_loss_fixed': focal_loss(gamma=2., alpha=0.25)
 })
 
-# Load model
-MODEL_PATH = 'liver_tumor_classifier.keras'
-METADATA_PATH = 'model_metadata.pkl'
-model = load_model(MODEL_PATH, compile=False)
-model.compile(optimizer='adam',
-              loss=focal_loss(gamma=2., alpha=0.25),
-              metrics=['accuracy'])
+# -----------------------------
+# Step 2: Download Model & Metadata if Not Present
+# -----------------------------
+MODEL_URL = "https://github.com/Mo7amed50/liver-tumor-classifier/releases/download/V1.0/liver_tumor_classifier.keras "
+METADATA_URL = "https://raw.githubusercontent.com/Mo7amed50/liver-tumor-classifier/main/model_metadata.pkl "
 
+MODEL_PATH = "liver_tumor_classifier.keras"
+METADATA_PATH = "model_metadata.pkl"
+
+
+def download_file(url, filename):
+    with st.spinner(f"📥 Downloading {filename}..."):
+        response = requests.get(url, allow_redirects=True, stream=True)
+        total_length = response.headers.get('content-length')
+        chunk_size = 1024
+        downloaded = 0
+        with open(filename, 'wb') as f:
+            for data in response.iter_content(chunk_size=chunk_size):
+                downloaded += len(data)
+                f.write(data)
+                if total_length:
+                    done = int(50 * downloaded / int(total_length))
+                    bar = '█' * done + '-' * (50 - done)
+                    st.markdown(f"<small>Downloading {filename}: [{bar}]</small>", unsafe_allow_html=True)
+        st.success(f"✅ {filename} downloaded.")
+
+
+if not os.path.exists(MODEL_PATH):
+    download_file(MODEL_URL, MODEL_PATH)
+
+if not os.path.exists(METADATA_PATH):
+    download_file(METADATA_URL, METADATA_PATH)
+
+# Load model
+@st.cache_resource
+def load_keras_model():
+    model = load_model(MODEL_PATH, compile=False)
+    model.compile(optimizer='adam',
+                  loss=focal_loss(gamma=2., alpha=0.25),
+                  metrics=['accuracy'])
+    return model
+
+model = load_keras_model()
+
+# Load metadata
 with open(METADATA_PATH, 'rb') as f:
     metadata = pickle.load(f)
+
 thresholds = metadata.get('thresholds', {0: 0.36178, 1: 0.48146927, 2: 0.5123631})
 class_names = ['Normal Liver', 'Hemangioma Liver Tumor', 'Hepatocellular Carcinoma']
 
 # -----------------------------
-# Step 2: Image Preprocessing
+# Step 3: Image Preprocessing
 # -----------------------------
-
 def preprocess_image(image_bytes: bytes, target_size: Tuple[int, int] = (128, 128)) -> np.ndarray:
     img = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), 1)
     if img is None:
@@ -99,9 +138,8 @@ def preprocess_image(image_bytes: bytes, target_size: Tuple[int, int] = (128, 12
     return np.expand_dims(img, axis=0)  # Add batch dimension
 
 # -----------------------------
-# Step 3: Prediction Function
+# Step 4: Prediction Function
 # -----------------------------
-
 def predict_image(model, image_bytes: bytes, thresholds: dict, class_names: list) -> Tuple[str, dict]:
     try:
         processed_img = preprocess_image(image_bytes)
@@ -121,13 +159,11 @@ def predict_image(model, image_bytes: bytes, thresholds: dict, class_names: list
         return f"Error: {str(e)}", {}
 
 # -----------------------------
-# Step 4: Robust PDF Export Function
+# Step 5: Robust PDF Export Function
 # -----------------------------
-
 def download_pdf(data: dict, image_bytes: bytes, filename: str = "liver_prediction_report.pdf", key: str = "default_key") -> None:
-    # Track temporary files for cleanup
     temp_files = []
-    
+
     def cleanup_temp_files():
         for file_path in temp_files:
             try:
@@ -136,59 +172,47 @@ def download_pdf(data: dict, image_bytes: bytes, filename: str = "liver_predicti
             except Exception:
                 pass
 
-    # Register cleanup function
     atexit.register(cleanup_temp_files)
 
-    # Create PDF
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.set_font("Arial", size=12)
 
-    # Header
     pdf.cell(0, 10, txt="Liver Tumor Classification Report", ln=True, align='C')
     pdf.ln(8)
-
-    # Timestamp
     pdf.cell(0, 8, txt=f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True)
     pdf.ln(8)
 
-    # Handle image embedding
     if image_bytes:
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_img:
                 temp_files.append(tmp_img.name)
                 img = Image.open(BytesIO(image_bytes))
                 img.save(tmp_img.name, format='JPEG', quality=95)
-                
             pdf.image(tmp_img.name, x=50, w=110)
             pdf.ln(8)
         except Exception as e:
             st.warning(f"⚠️ Could not embed image in PDF: {str(e)}")
 
-    # Prediction result
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 8, txt="Prediction:", ln=True)
     pdf.set_font("Arial", '', 12)
     pdf.cell(0, 6, txt=f"- {data['prediction']}", ln=True)
     pdf.ln(4)
 
-    # Confidence scores
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 8, txt="Confidence Scores:", ln=True)
     pdf.set_font("Arial", '', 12)
     for cls, score in data.get("scores", {}).items():
         pdf.cell(0, 6, txt=f"- {cls}: {score:.4f}", ln=True)
 
-    # Generate PDF
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_pdf:
             temp_files.append(tmp_pdf.name)
             pdf.output(tmp_pdf.name)
-            
         with open(tmp_pdf.name, 'rb') as f:
             pdf_bytes = f.read()
-
         st.download_button(
             label="📄 Download Result (PDF)",
             data=pdf_bytes,
@@ -202,32 +226,12 @@ def download_pdf(data: dict, image_bytes: bytes, filename: str = "liver_predicti
         cleanup_temp_files()
 
 # -----------------------------
-# Step 5: Streamlit UI with Fixed Spacing
+# Step 6: Streamlit UI
 # -----------------------------
+st.set_page_config(page_title="🧬 Liver Tumor Classifier", layout="wide", initial_sidebar_state="expanded")
 
-st.set_page_config(
-    page_title="🧬 Liver Tumor Classifier",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Minimal CSS to prevent extra spacing
-st.markdown("""
-<style>
-    div.stAlert, div.stSuccess, div.stWarning, div.stError {
-        margin-top: 0 !important;
-        padding-top: 0 !important;
-    }
-    div.stMarkdown {
-        margin: 0 !important;
-        padding: 0 !important;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Header
-st.markdown("<h1 style='text-align:center; margin-bottom:10px;'>🧬 Liver Tumor Classification</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align:center;font-size:16px; margin-bottom:30px;'>Upload an ultrasound scan of the liver for classification.</p>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align:center;'>🧬 Liver Tumor Classification</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center;font-size:16px;'>Upload an ultrasound scan of the liver for classification.</p>", unsafe_allow_html=True)
 
 # Sidebar
 with st.sidebar:
@@ -245,10 +249,10 @@ with st.sidebar:
     - Interpretable output
     """)
 
-# Main Content - Tabs
+# Tabs
 tab1, tab2 = st.tabs(["🖼️ Single Image Upload", "📂 Batch Upload"])
 
-# Single Image Upload
+# Single Upload Tab
 with tab1:
     uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"], key="single")
     if uploaded_file is not None:
@@ -260,7 +264,6 @@ with tab1:
             st.image(img_rgb, caption='Uploaded Image')
         with col2:
             predicted_class, confidence_dict = predict_image(model, file_bytes, thresholds, class_names)
-            st.markdown('<div class="prediction-box">', unsafe_allow_html=True)
             if predicted_class.startswith("Error"):
                 st.error(predicted_class)
             elif predicted_class == "Uncertain":
@@ -272,14 +275,13 @@ with tab1:
             for cls, score in zip(class_names, probabilities):
                 st.progress(float(score))
                 st.text(f"{cls}: {score:.4f}")
-            st.markdown('</div>', unsafe_allow_html=True)
             result_data = {
                 "prediction": predicted_class,
                 "scores": {c: float(s) for c, s in zip(class_names, probabilities)}
             }
             download_pdf(result_data, image_bytes=file_bytes, filename="liver_prediction_report.pdf", key="single_report")
 
-# Batch Upload
+# Batch Upload Tab
 with tab2:
     uploaded_files = st.file_uploader("Upload multiple images...", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
     if uploaded_files:
@@ -323,7 +325,6 @@ with tab2:
             except Exception as e:
                 st.error(f"❌ Failed to process {uploaded_file.name}: {str(e)}")
 
-        # Results summary
         with st.expander("📋 View All Predictions"):
             df = pd.DataFrame([
                 {
