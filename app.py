@@ -18,6 +18,15 @@ import atexit
 import requests
 
 # -----------------------------
+# Step 0: Set Page Config First
+# -----------------------------
+st.set_page_config(
+    page_title="🧬 Liver Tumor Classifier",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# -----------------------------
 # Step 1: Define Custom Objects
 # -----------------------------
 class CBAMLayer(Layer):
@@ -226,14 +235,30 @@ def download_pdf(data: dict, image_bytes: bytes, filename: str = "liver_predicti
         cleanup_temp_files()
 
 # -----------------------------
-# Step 6: Streamlit UI
+# Step 6: Minimal CSS Fix
 # -----------------------------
-st.set_page_config(page_title="🧬 Liver Tumor Classifier", layout="wide", initial_sidebar_state="expanded")
+st.markdown("""
+<style>
+    div.stAlert, div.stSuccess, div.stWarning, div.stError {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+    }
+    div.stMarkdown {
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-st.markdown("<h1 style='text-align:center;'>🧬 Liver Tumor Classification</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align:center;font-size:16px;'>Upload an ultrasound scan of the liver for classification.</p>", unsafe_allow_html=True)
+# -----------------------------
+# Step 7: Header Section
+# -----------------------------
+st.markdown("<h1 style='text-align:center; margin-bottom:10px;'>🧬 Liver Tumor Classification</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center;font-size:16px; margin-bottom:30px;'>Upload an ultrasound scan of the liver for classification.</p>", unsafe_allow_html=True)
 
-# Sidebar
+# -----------------------------
+# Step 8: Sidebar Info
+# -----------------------------
 with st.sidebar:
     st.markdown(""" <div style="background:#007bff; color:white; padding:20px; border-radius:10px;"> <h3>🧠 About This Model</h3> </div>""", unsafe_allow_html=True)
     st.markdown("""
@@ -249,10 +274,12 @@ with st.sidebar:
     - Interpretable output
     """)
 
-# Tabs
+# -----------------------------
+# Step 9: Tabs UI
+# -----------------------------
 tab1, tab2 = st.tabs(["🖼️ Single Image Upload", "📂 Batch Upload"])
 
-# Single Upload Tab
+# --- Tab 1: Single Upload ---
 with tab1:
     uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"], key="single")
     if uploaded_file is not None:
@@ -281,7 +308,7 @@ with tab1:
             }
             download_pdf(result_data, image_bytes=file_bytes, filename="liver_prediction_report.pdf", key="single_report")
 
-# Batch Upload Tab
+# --- Tab 2: Batch Upload ---
 with tab2:
     uploaded_files = st.file_uploader("Upload multiple images...", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
     if uploaded_files:
@@ -346,7 +373,9 @@ with tab2:
                 }, image_bytes=item["image_bytes"], filename=f"report_{item['filename']}.pdf", key=f"all_reports_{item['filename']}")
             st.success("✅ All PDF reports generated!")
 
+# -----------------------------
 # Footer
+# -----------------------------
 st.markdown("""
 <footer style="text-align:center; margin-top:30px; font-size:14px; color:#888;">
     © 2025 Liver Tumor Classifier | Powered by Deep Learning & Streamlit
