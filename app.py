@@ -73,8 +73,8 @@ get_custom_objects().update({
 })
 
 # Load model
-MODEL_PATH = r'D:\liver-tumor-classifier\liver_tumor_classifier.keras'
-METADATA_PATH = r'D:\liver-tumor-classifier\model_metadata.pkl'
+MODEL_PATH = 'liver_tumor_classifier.keras'
+METADATA_PATH = 'model_metadata.pkl'
 model = load_model(MODEL_PATH, compile=False)
 model.compile(optimizer='adam',
               loss=focal_loss(gamma=2., alpha=0.25),
